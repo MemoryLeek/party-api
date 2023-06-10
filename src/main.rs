@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, str::FromStr};
+use std::{env, net::SocketAddr, str::FromStr};
 
 use axum::{
     extract::{ConnectInfo, State},
@@ -83,8 +83,12 @@ async fn list_visitors<T: TimeService>(
 
 #[tokio::main]
 async fn main() {
-    let db_options = SqliteConnectOptions::from_str("sqlite://data.db")
-        .expect("bad connection string")
+    let db_connection_string = format!(
+        "sqlite://{}",
+        env::var("SQLITE_DB").unwrap_or("data.db".into())
+    );
+    let db_options = SqliteConnectOptions::from_str(&db_connection_string)
+        .expect(&format!("bad connection string: {}", db_connection_string))
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal);
@@ -96,8 +100,10 @@ async fn main() {
 
     db::init(&db).await.expect("failed to initialize database");
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    axum::Server::bind(&addr)
+    let addr = env::var("LISTEN_ADDR").unwrap_or("127.0.0.1:3000".into());
+    let socket_address = SocketAddr::from_str(&addr).expect(&format!("bad LISTEN_ADDR: {}", addr));
+
+    axum::Server::bind(&socket_address)
         .serve(api(SystemTimeService {}, db).into_make_service_with_connect_info::<SocketAddr>())
         .await
         .unwrap();

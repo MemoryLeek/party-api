@@ -4,7 +4,16 @@ This is a REST API backend specifically designed to streamline the visitor regis
 [demoparties](https://en.wikipedia.org/wiki/Demoscene#Parties). To maintain simplicity, all data is persisted in an
 SQLite database.
 
-## Examples
+## Running
+
+The following environment variables are used for configuration:
+
+| Variable    | Description                  | Default value  |
+|-------------|------------------------------|----------------|
+| SQLITE_DB   | Path to SQLite database file | data.db        |
+| LISTEN_ADDR | IP and port to listen on     | 127.0.0.1:3000 |
+
+## Example requests
 
 ### Fetching registered visitors
 
