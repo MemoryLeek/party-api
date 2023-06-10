@@ -45,7 +45,10 @@ Note that the fields `email` and `extra` are not shown in the public `GET /visit
 for the party organizers.
 
 ```sh
-curl -i -H 'Content-Type: application/json' -X POST -d '{"nick":"Lorem","group":"Ipsum","email":"lorem@example.com","extra":"Allergic to metaballs"}' http://localhost:3000/register
+curl -i -H 'Content-Type: application/json' \
+     -X POST \
+     -d '{"nick":"Lorem","group":"Ipsum","email":"lorem@example.com","extra":"Allergic to metaballs"}' \
+     http://localhost:3000/register
 ```
 
 ```
