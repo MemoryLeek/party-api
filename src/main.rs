@@ -2,6 +2,7 @@ use std::{env, net::SocketAddr, str::FromStr};
 
 use axum::{
     extract::{ConnectInfo, State},
+    handler::Handler,
     http::{HeaderMap, StatusCode},
     routing::{get, post},
     Json, Router,
@@ -14,6 +15,10 @@ use sqlx::{
 };
 use time::{SystemTimeService, TimeService};
 use tokio::signal;
+use tower::ServiceBuilder;
+use tower_governor::{
+    governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
+};
 
 mod db;
 mod error;
@@ -40,8 +45,25 @@ struct ApiState<T: TimeService> {
 }
 
 fn api(time: impl TimeService, db: SqlitePool) -> Router {
+    let add_visitor_rate_config = Box::new(
+        GovernorConfigBuilder::default()
+            .per_second(60)
+            .burst_size(3)
+            .key_extractor(SmartIpKeyExtractor)
+            .finish()
+            .unwrap(),
+    );
+
+    let add_visitor_rate_limit = ServiceBuilder::new()
+        .layer(axum::error_handling::HandleErrorLayer::new(
+            |e: axum::BoxError| async move { tower_governor::errors::display_error(e) },
+        ))
+        .layer(GovernorLayer {
+            config: Box::leak(add_visitor_rate_config),
+        });
+
     Router::new()
-        .route("/register", post(add_visitor))
+        .route("/register", post(add_visitor.layer(add_visitor_rate_limit)))
         .route("/visitors", get(list_visitors))
         .with_state(ApiState { time, db })
 }
@@ -139,9 +161,9 @@ async fn shutdown_signal() {
 mod test {
     use std::net::{IpAddr, Ipv4Addr};
 
-    use axum::http::Request;
+    use axum::{http::Request, response::IntoResponse};
     use hyper::Body;
-    use tower::ServiceExt;
+    use tower::{Service, ServiceExt};
 
     use crate::time::ConstantTimeService;
 
@@ -232,6 +254,42 @@ mod test {
         assert_eq!(visitor.group.as_deref(), Some("Testerz"));
         assert_eq!(visitor.email.as_deref(), Some("test@example.com"));
         assert_eq!(visitor.extra.as_deref(), Some("Snacks"));
+    }
+
+    #[tokio::test]
+    async fn should_rate_limit_register() {
+        let time = ConstantTimeService::new();
+        let db = database().await;
+        let mut api = api(time.clone(), db.clone());
+
+        async fn register(api: &mut Router, nick: &str) -> impl IntoResponse {
+            api.ready()
+                .await
+                .unwrap()
+                .call(
+                    Request::builder()
+                        .extension(ConnectInfo(SocketAddr::new(
+                            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                            8080,
+                        )))
+                        .method("POST")
+                        .uri("/register")
+                        .header("Content-Type", "application/json")
+                        .body(format!(r#"{{"nick":"{}"}}"#, nick).into())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+
+        let response = register(&mut api, "One").await.into_response();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let response = register(&mut api, "Two").await.into_response();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let response = register(&mut api, "Three").await.into_response();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let response = register(&mut api, "Four should fail").await.into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
     #[tokio::test]
