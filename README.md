@@ -48,10 +48,12 @@ date: Sat, 10 Jun 2023 19:16:20 GMT
 
 [
   {
+    "id": 1,
     "nick": "Lorem",
     "group": null
   },
   {
+    "id": 2,
     "nick": "Ipsum Dolor",
     "group": "Sit Amet"
   }
