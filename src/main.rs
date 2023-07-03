@@ -34,6 +34,7 @@ struct RegisterRequest {
 
 #[derive(sqlx::FromRow, Serialize)]
 struct Visitor {
+    id: i32,
     nick: String,
     group: Option<String>,
 }
@@ -97,7 +98,7 @@ async fn add_visitor<T: TimeService>(
 async fn list_visitors<T: TimeService>(
     State(state): State<ApiState<T>>,
 ) -> Result<(StatusCode, Json<Vec<Visitor>>), ApiError> {
-    let visitors = sqlx::query_as::<_, Visitor>(r#"SELECT nick, "group" FROM visitor"#)
+    let visitors = sqlx::query_as::<_, Visitor>(r#"SELECT id, nick, "group" FROM visitor"#)
         .fetch_all(&state.db)
         .await?;
 
@@ -300,19 +301,15 @@ mod test {
 
         insert_visitor(
             &db,
-            Visitor {
-                nick: "Groupless".into(),
-                group: None,
-            },
+            "Groupless",
+            None,
         )
         .await;
 
         insert_visitor(
             &db,
-            Visitor {
-                nick: "With Group".into(),
-                group: Some("Awesome".into()),
-            },
+            "With Group",
+            Some("Awesome".into()),
         )
         .await;
 
@@ -338,14 +335,14 @@ mod test {
         .unwrap();
         assert_eq!(
             body,
-            r#"[{"nick":"Groupless","group":null},{"nick":"With Group","group":"Awesome"}]"#
+            r#"[{"id":1,"nick":"Groupless","group":null},{"id":2,"nick":"With Group","group":"Awesome"}]"#
         );
     }
 
-    async fn insert_visitor(db: &SqlitePool, visitor: Visitor) {
+    async fn insert_visitor(db: &SqlitePool, nick: &str, group: Option<&str>) {
         sqlx::query(r#"INSERT INTO visitor (created_at, ip, nick, "group") VALUES (CURRENT_TIMESTAMP, '127.0.0.1:8080', $1, $2)"#)
-            .bind(visitor.nick)
-            .bind(visitor.group)
+            .bind(nick)
+            .bind(group)
             .execute(db)
             .await
             .unwrap();
