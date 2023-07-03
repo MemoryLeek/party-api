@@ -13,6 +13,25 @@ The following environment variables are used for configuration:
 | SQLITE_DB   | Path to SQLite database file | data.db        |
 | LISTEN_ADDR | IP and port to listen on     | 127.0.0.1:3000 |
 
+### Sample Docker Compose
+
+Create a `docker-compose.yml` file with the following content.
+
+```yml
+services:
+  party-api:
+    image: ghcr.io/memoryleek/party-api:latest
+    ports:
+      - 3000:3000
+    volumes:
+      - ./party-api-data:/data
+    environment:
+      - SQLITE_DB=/data/party-api.db
+```
+
+Then run `docker-compose up -d` to start it. The SQLite database will be stored outside the container as
+`party-api-data/party-api.db`.
+
 ## Example requests
 
 ### Fetching registered visitors
