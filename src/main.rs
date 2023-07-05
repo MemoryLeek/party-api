@@ -21,6 +21,7 @@ use tower_governor::{
 };
 
 mod admin;
+mod cors;
 mod db;
 mod error;
 #[cfg(test)]
@@ -70,6 +71,7 @@ fn api(time: impl TimeService, db: SqlitePool) -> Router {
         .route("/register", post(add_visitor.layer(add_visitor_rate_limit)))
         .route("/visitors", get(list_visitors))
         .nest("/admin", admin::routes())
+        .layer(cors::layer())
         .with_state(ApiState { time, db })
 }
 

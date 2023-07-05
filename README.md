@@ -11,6 +11,7 @@ The following environment variables are used for configuration:
 | Variable    | Description                         | Default value  |
 |-------------|-------------------------------------|----------------|
 | API_KEY     | Key protecting the /admin endpoints |                |
+| CORS_ORIGIN | CORS preflight URL restriction      | *              |
 | SQLITE_DB   | Path to SQLite database file        | data.db        |
 | LISTEN_ADDR | IP and port to listen on            | 127.0.0.1:3000 |
 
