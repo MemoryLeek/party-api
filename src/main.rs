@@ -20,8 +20,11 @@ use tower_governor::{
     governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
 };
 
+mod admin;
 mod db;
 mod error;
+#[cfg(test)]
+mod testing;
 mod time;
 
 #[derive(Deserialize)]
@@ -40,7 +43,7 @@ struct Visitor {
 }
 
 #[derive(Clone)]
-struct ApiState<T: TimeService> {
+pub struct ApiState<T: TimeService> {
     time: T,
     db: SqlitePool,
 }
@@ -66,6 +69,7 @@ fn api(time: impl TimeService, db: SqlitePool) -> Router {
     Router::new()
         .route("/register", post(add_visitor.layer(add_visitor_rate_limit)))
         .route("/visitors", get(list_visitors))
+        .nest("/admin", admin::routes())
         .with_state(ApiState { time, db })
 }
 
@@ -170,19 +174,10 @@ mod test {
 
     use super::*;
 
-    async fn database() -> SqlitePool {
-        let db = SqlitePoolOptions::new()
-            .connect("sqlite::memory:")
-            .await
-            .unwrap();
-        db::init(&db).await.unwrap();
-        db
-    }
-
     #[tokio::test]
     async fn can_register_using_only_nick() {
         let time = ConstantTimeService::new();
-        let db = database().await;
+        let db = testing::database().await;
         let api = api(time.clone(), db.clone());
 
         let response = api
@@ -221,7 +216,7 @@ mod test {
     #[tokio::test]
     async fn can_register_with_all_fields() {
         let time = ConstantTimeService::new();
-        let db = database().await;
+        let db = testing::database().await;
         let api = api(time.clone(), db.clone());
 
         let response = api
@@ -260,7 +255,7 @@ mod test {
     #[tokio::test]
     async fn should_rate_limit_register() {
         let time = ConstantTimeService::new();
-        let db = database().await;
+        let db = testing::database().await;
         let mut api = api(time.clone(), db.clone());
 
         async fn register(api: &mut Router, nick: &str) -> impl IntoResponse {
@@ -296,22 +291,12 @@ mod test {
     #[tokio::test]
     async fn can_list_visitors() {
         let time = ConstantTimeService::new();
-        let db = database().await;
+        let db = testing::database().await;
         let api = api(time.clone(), db.clone());
 
-        insert_visitor(
-            &db,
-            "Groupless",
-            None,
-        )
-        .await;
+        testing::insert_visitor(&db, "Groupless", None).await;
 
-        insert_visitor(
-            &db,
-            "With Group",
-            Some("Awesome".into()),
-        )
-        .await;
+        testing::insert_visitor(&db, "With Group", Some("Awesome".into())).await;
 
         let response = api
             .oneshot(
@@ -337,14 +322,5 @@ mod test {
             body,
             r#"[{"id":1,"nick":"Groupless","group":null},{"id":2,"nick":"With Group","group":"Awesome"}]"#
         );
-    }
-
-    async fn insert_visitor(db: &SqlitePool, nick: &str, group: Option<&str>) {
-        sqlx::query(r#"INSERT INTO visitor (created_at, ip, nick, "group") VALUES (CURRENT_TIMESTAMP, '127.0.0.1:8080', $1, $2)"#)
-            .bind(nick)
-            .bind(group)
-            .execute(db)
-            .await
-            .unwrap();
     }
 }
