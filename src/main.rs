@@ -61,7 +61,7 @@ fn api(time: impl TimeService, db: SqlitePool) -> Router {
 
     let add_visitor_rate_limit = ServiceBuilder::new()
         .layer(axum::error_handling::HandleErrorLayer::new(
-            |e: axum::BoxError| async move { tower_governor::errors::display_error(e) },
+            |e: axum::BoxError| async move { ApiError::from(e) },
         ))
         .layer(GovernorLayer {
             config: Box::leak(add_visitor_rate_config),

@@ -4,6 +4,7 @@ use axum::{
     Json,
 };
 use serde::Serialize;
+use tower::BoxError;
 
 #[derive(Serialize)]
 pub(crate) struct ApiError {
@@ -18,6 +19,14 @@ impl IntoResponse for ApiError {
 
 impl From<sqlx::Error> for ApiError {
     fn from(error: sqlx::Error) -> Self {
+        Self {
+            error: error.to_string(),
+        }
+    }
+}
+
+impl From<BoxError> for ApiError {
+    fn from(error: BoxError) -> Self {
         Self {
             error: error.to_string(),
         }
