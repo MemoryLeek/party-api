@@ -239,7 +239,7 @@ mod test {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
         let body = String::from_utf8(
             hyper::body::to_bytes(response.into_body())
@@ -250,7 +250,7 @@ mod test {
         .unwrap();
         assert_eq!(
             body,
-            r#"{"error":"error returned from database: (code: 2067) UNIQUE constraint failed: visitor.nick"}"#
+            r#"{"error":"(code: 2067) UNIQUE constraint failed: visitor.nick"}"#
         );
     }
 
