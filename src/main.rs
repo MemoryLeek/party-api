@@ -216,6 +216,45 @@ mod test {
     }
 
     #[tokio::test]
+    async fn can_only_register_single_nick() {
+        let time = ConstantTimeService::new();
+        let db = testing::database().await;
+        let api = api(time.clone(), db.clone());
+
+        testing::insert_visitor(&db, "Only One Nick", None).await;
+
+        let response = api
+            .oneshot(
+                Request::builder()
+                    .extension(ConnectInfo(SocketAddr::new(
+                        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                        8080,
+                    )))
+                    .method("POST")
+                    .uri("/register")
+                    .header("Content-Type", "application/json")
+                    .body(r#"{"nick":"Only One Nick"}"#.into())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let body = String::from_utf8(
+            hyper::body::to_bytes(response.into_body())
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert_eq!(
+            body,
+            r#"{"error":"error returned from database: (code: 2067) UNIQUE constraint failed: visitor.nick"}"#
+        );
+    }
+
+    #[tokio::test]
     async fn can_register_with_all_fields() {
         let time = ConstantTimeService::new();
         let db = testing::database().await;

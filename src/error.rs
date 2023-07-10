@@ -1,4 +1,5 @@
 use axum::{
+    http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
@@ -11,7 +12,7 @@ pub(crate) struct ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        Json(self).into_response()
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(self)).into_response()
     }
 }
 
