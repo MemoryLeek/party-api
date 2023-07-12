@@ -5,7 +5,7 @@ use tower::{
     layer::util::{Identity, Stack},
     ServiceBuilder,
 };
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{CorsLayer, self};
 
 pub fn layer() -> ServiceBuilder<Stack<CorsLayer, Identity>> {
     let origin = if let Ok(value) = env::var("CORS_ORIGIN") {
@@ -15,6 +15,7 @@ pub fn layer() -> ServiceBuilder<Stack<CorsLayer, Identity>> {
     };
 
     let cors = CorsLayer::new()
+        .allow_headers(cors::Any)
         .allow_methods(vec![Method::GET, Method::POST])
         .allow_origin(origin);
 
@@ -30,7 +31,7 @@ mod test {
 
     use crate::{testing, time::ConstantTimeService};
 
-    #[tokio::test(flavor = "current_thread")]
+    #[tokio::test]
     async fn should_allow_any_by_default() {
         let time = ConstantTimeService::new();
         let db = testing::database().await;
@@ -60,6 +61,13 @@ mod test {
             response
                 .headers()
                 .get("Access-Control-Allow-Methods")
+                .map(|x| x.to_str().unwrap())
+        );
+        assert_eq!(
+            Some("*"),
+            response
+                .headers()
+                .get("Access-Control-Allow-Headers")
                 .map(|x| x.to_str().unwrap())
         );
     }
