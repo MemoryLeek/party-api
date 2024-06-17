@@ -6,7 +6,6 @@ use axum::{
     Json,
 };
 use serde::Serialize;
-use tower::BoxError;
 use tower_governor::GovernorError;
 
 #[derive(Serialize)]
@@ -39,14 +38,14 @@ impl From<sqlx::Error> for ApiError {
     }
 }
 
-impl From<BoxError> for ApiError {
-    fn from(error: BoxError) -> Self {
-        match error.downcast_ref::<GovernorError>() {
-            Some(GovernorError::TooManyRequests { .. }) => Self {
+impl From<GovernorError> for ApiError {
+    fn from(error: GovernorError) -> Self {
+        match error {
+            GovernorError::TooManyRequests { .. } => Self {
                 code: StatusCode::TOO_MANY_REQUESTS,
                 error: "too many requests".to_owned(),
             },
-            Some(_) | None => Self {
+            _ => Self {
                 code: StatusCode::INTERNAL_SERVER_ERROR,
                 error: error.to_string(),
             },

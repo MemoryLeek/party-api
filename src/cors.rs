@@ -5,7 +5,7 @@ use tower::{
     layer::util::{Identity, Stack},
     ServiceBuilder,
 };
-use tower_http::cors::{CorsLayer, self};
+use tower_http::cors::{self, CorsLayer};
 
 pub fn layer() -> ServiceBuilder<Stack<CorsLayer, Identity>> {
     let origin = if let Ok(value) = env::var("CORS_ORIGIN") {
@@ -26,7 +26,8 @@ pub fn layer() -> ServiceBuilder<Stack<CorsLayer, Identity>> {
 mod test {
     use std::env;
 
-    use hyper::{Body, Request, StatusCode};
+    use axum::body::Body;
+    use hyper::{Request, StatusCode};
     use tower::ServiceExt;
 
     use crate::{testing, time::ConstantTimeService};

@@ -1,11 +1,11 @@
-use std::{env, net::SocketAddr, str::FromStr};
+use std::{env, net::SocketAddr, str::FromStr, sync::Arc};
 
 use axum::{
     extract::{ConnectInfo, State},
     handler::Handler,
     http::{HeaderMap, StatusCode},
-    routing::{get, post},
-    Json, Router,
+    response::IntoResponse,
+    routing::{get, post}, Json, Router,
 };
 use error::ApiError;
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ use sqlx::{
     SqlitePool,
 };
 use time::{SystemTimeService, TimeService};
-use tokio::signal;
+use tokio::{net::TcpListener, signal};
 use tower::ServiceBuilder;
 use tower_governor::{
     governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
@@ -50,21 +50,19 @@ pub struct ApiState<T: TimeService> {
 }
 
 fn api(time: impl TimeService, db: SqlitePool) -> Router {
-    let add_visitor_rate_config = Box::new(
+    let add_visitor_rate_config = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(60)
             .burst_size(3)
             .key_extractor(SmartIpKeyExtractor)
+            .error_handler(|error| ApiError::from(error).into_response())
             .finish()
             .unwrap(),
     );
 
     let add_visitor_rate_limit = ServiceBuilder::new()
-        .layer(axum::error_handling::HandleErrorLayer::new(
-            |e: axum::BoxError| async move { ApiError::from(e) },
-        ))
         .layer(GovernorLayer {
-            config: Box::leak(add_visitor_rate_config),
+            config: add_visitor_rate_config,
         });
 
     Router::new()
@@ -132,12 +130,17 @@ async fn main() {
 
     let addr = env::var("LISTEN_ADDR").unwrap_or("127.0.0.1:3000".into());
     let socket_address = SocketAddr::from_str(&addr).expect(&format!("bad LISTEN_ADDR: {}", addr));
-
-    axum::Server::bind(&socket_address)
-        .serve(api(SystemTimeService {}, db).into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(shutdown_signal())
+    let listener = TcpListener::bind(socket_address)
         .await
-        .unwrap();
+        .expect("failed to bind listener");
+
+    axum::serve(
+        listener,
+        api(SystemTimeService {}, db).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .unwrap();
 }
 
 async fn shutdown_signal() {
@@ -168,8 +171,8 @@ async fn shutdown_signal() {
 mod test {
     use std::net::{IpAddr, Ipv4Addr};
 
-    use axum::{http::Request, response::IntoResponse};
-    use hyper::Body;
+    use axum::{body::Body, http::Request, response::IntoResponse};
+    use http_body_util::BodyExt;
     use tower::{Service, ServiceExt};
 
     use crate::time::ConstantTimeService;
@@ -192,7 +195,7 @@ mod test {
                     .method("POST")
                     .uri("/register")
                     .header("Content-Type", "application/json")
-                    .body(r#"{"nick":"Test"}"#.into())
+                    .body::<Body>(r#"{"nick":"Test"}"#.into())
                     .unwrap(),
             )
             .await
@@ -233,7 +236,7 @@ mod test {
                     .method("POST")
                     .uri("/register")
                     .header("Content-Type", "application/json")
-                    .body(r#"{"nick":"Only One Nick"}"#.into())
+                    .body(Body::from(r#"{"nick":"Only One Nick"}"#))
                     .unwrap(),
             )
             .await
@@ -242,9 +245,12 @@ mod test {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
                 .unwrap()
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();
@@ -270,7 +276,7 @@ mod test {
                     .method("POST")
                     .uri("/register")
                     .header("Content-Type", "application/json")
-                    .body(r#"{"nick":"Test","group":"Testerz","email":"test@example.com","extra":"Snacks"}"#.into())
+                    .body(Body::from(r#"{"nick":"Test","group":"Testerz","email":"test@example.com","extra":"Snacks"}"#))
                     .unwrap(),
             )
             .await
@@ -300,7 +306,7 @@ mod test {
         let mut api = api(time.clone(), db.clone());
 
         async fn register(api: &mut Router, nick: &str) -> impl IntoResponse {
-            api.ready()
+            ServiceExt::<Request<Body>>::ready(&mut api.clone().into_service())
                 .await
                 .unwrap()
                 .call(
@@ -312,7 +318,7 @@ mod test {
                         .method("POST")
                         .uri("/register")
                         .header("Content-Type", "application/json")
-                        .body(format!(r#"{{"nick":"{}"}}"#, nick).into())
+                        .body(Body::from(format!(r#"{{"nick":"{}"}}"#, nick)))
                         .unwrap(),
                 )
                 .await
@@ -353,9 +359,12 @@ mod test {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
                 .unwrap()
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();

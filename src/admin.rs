@@ -56,7 +56,9 @@ async fn delete_visitor<T: TimeService>(
 mod test {
     use std::env;
 
-    use hyper::{Body, Request, StatusCode};
+    use axum::body::Body;
+    use http_body_util::BodyExt;
+    use hyper::{Request, StatusCode};
     use tower::ServiceExt;
 
     use crate::{
@@ -114,9 +116,12 @@ mod test {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = String::from_utf8(
-            hyper::body::to_bytes(response.into_body())
+            response
+                .into_body()
+                .collect()
                 .await
                 .unwrap()
+                .to_bytes()
                 .to_vec(),
         )
         .unwrap();
