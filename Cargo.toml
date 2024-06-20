@@ -1,6 +1,6 @@
 [package]
 name = "party-api"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -8,7 +8,7 @@ axum = { version = "0.7", features = ["tokio"] }
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-native-tls", "chrono"] }
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls", "chrono"] }
 tokio = { version = "1.38", features = ["full"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["auth", "cors", "validate-request"] }

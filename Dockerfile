@@ -1,5 +1,5 @@
 FROM rust:alpine as builder
-RUN apk add pkgconfig openssl-dev libc-dev
+RUN apk add pkgconfig libc-dev
 
 WORKDIR /usr/src/party-api
 COPY . .
