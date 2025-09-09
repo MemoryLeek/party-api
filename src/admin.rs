@@ -1,14 +1,14 @@
 use std::env;
 
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     routing::{delete, get},
-    Json, Router,
 };
 use tower::ServiceBuilder;
 
-use crate::{db, error::ApiError, time::TimeService, ApiState};
+use crate::{ApiState, db, error::ApiError, time::TimeService};
 
 pub fn routes<T: TimeService>() -> Router<ApiState<T>> {
     match env::var("API_KEY") {
@@ -18,7 +18,7 @@ pub fn routes<T: TimeService>() -> Router<ApiState<T>> {
         }
         Ok(key) => Router::new()
             .route("/visitors", get(list_visitors))
-            .route("/visitors/:id", delete(delete_visitor))
+            .route("/visitors/{id}", delete(delete_visitor))
             .layer(
                 ServiceBuilder::new()
                     .layer(tower_http::validate_request::ValidateRequestHeaderLayer::bearer(&key)),
@@ -68,7 +68,7 @@ mod test {
 
     #[tokio::test]
     async fn should_require_key_to_list_visitors() {
-        env::set_var("API_KEY", "key");
+        unsafe { env::set_var("API_KEY", "key") };
 
         let time = ConstantTimeService::new();
         let db = testing::database().await;
@@ -91,7 +91,7 @@ mod test {
 
     #[tokio::test]
     async fn can_list_visitors() {
-        env::set_var("API_KEY", "key");
+        unsafe { env::set_var("API_KEY", "key") };
 
         let time = ConstantTimeService::new();
         let db = testing::database().await;
@@ -136,7 +136,7 @@ mod test {
 
     #[tokio::test]
     async fn should_require_key_to_delete_visitor() {
-        env::set_var("API_KEY", "key");
+        unsafe { env::set_var("API_KEY", "key") };
 
         let time = ConstantTimeService::new();
         let db = testing::database().await;
@@ -159,7 +159,7 @@ mod test {
 
     #[tokio::test]
     async fn can_delete_visitor() {
-        env::set_var("API_KEY", "key");
+        unsafe { env::set_var("API_KEY", "key") };
 
         let time = ConstantTimeService::new();
         let db = testing::database().await;

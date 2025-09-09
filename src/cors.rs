@@ -2,8 +2,8 @@ use std::env;
 
 use axum::http::{HeaderValue, Method};
 use tower::{
-    layer::util::{Identity, Stack},
     ServiceBuilder,
+    layer::util::{Identity, Stack},
 };
 use tower_http::cors::{self, CorsLayer};
 
@@ -75,7 +75,7 @@ mod test {
 
     #[tokio::test]
     async fn should_allow_override_by_env() {
-        env::set_var("CORS_ORIGIN", "http://example.com");
+        unsafe { env::set_var("CORS_ORIGIN", "http://example.com") };
 
         let time = ConstantTimeService::new();
         let db = testing::database().await;

@@ -1,23 +1,23 @@
 use std::{env, net::SocketAddr, str::FromStr, sync::Arc};
 
 use axum::{
+    Json, Router,
     extract::{ConnectInfo, State},
     handler::Handler,
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
-    routing::{get, post}, Json, Router,
+    routing::{get, post},
 };
 use error::ApiError;
 use serde::{Deserialize, Serialize};
 use sqlx::{
-    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
     SqlitePool,
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 use time::{SystemTimeService, TimeService};
 use tokio::{net::TcpListener, signal};
 use tower::ServiceBuilder;
 use tower_governor::{
-    governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
+    GovernorLayer, governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor,
 };
 
 mod admin;
@@ -55,15 +55,12 @@ fn api(time: impl TimeService, db: SqlitePool) -> Router {
             .per_second(60)
             .burst_size(3)
             .key_extractor(SmartIpKeyExtractor)
-            .error_handler(|error| ApiError::from(error).into_response())
             .finish()
             .unwrap(),
     );
 
-    let add_visitor_rate_limit = ServiceBuilder::new()
-        .layer(GovernorLayer {
-            config: add_visitor_rate_config,
-        });
+    let add_visitor_rate_limit =
+        ServiceBuilder::new().layer(GovernorLayer::new(add_visitor_rate_config));
 
     Router::new()
         .route("/register", post(add_visitor.layer(add_visitor_rate_limit)))
