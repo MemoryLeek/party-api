@@ -8,9 +8,9 @@ use axum::{
 };
 use tower::ServiceBuilder;
 
-use crate::{ApiState, db, error::ApiError, time::TimeService};
+use crate::{ApiState, db, error::ApiError, pow::ProofOfWorkService, time::TimeService};
 
-pub fn routes<T: TimeService>() -> Router<ApiState<T>> {
+pub fn routes<T: TimeService, P: ProofOfWorkService>() -> Router<ApiState<T, P>> {
     match env::var("API_KEY") {
         Err(_) => {
             eprintln!("API_KEY not set, /admin endpoints will be disabled");
@@ -26,8 +26,8 @@ pub fn routes<T: TimeService>() -> Router<ApiState<T>> {
     }
 }
 
-async fn list_visitors<T: TimeService>(
-    State(state): State<ApiState<T>>,
+async fn list_visitors<T: TimeService, P: ProofOfWorkService>(
+    State(state): State<ApiState<T, P>>,
 ) -> Result<(StatusCode, Json<Vec<db::Visitor>>), ApiError> {
     let visitors = sqlx::query_as::<_, db::Visitor>(r#"SELECT * FROM visitor ORDER BY id"#)
         .fetch_all(&state.db)
@@ -36,9 +36,9 @@ async fn list_visitors<T: TimeService>(
     Ok((StatusCode::OK, Json(visitors)))
 }
 
-async fn delete_visitor<T: TimeService>(
+async fn delete_visitor<T: TimeService, P: ProofOfWorkService>(
     Path(id): Path<i32>,
-    State(state): State<ApiState<T>>,
+    State(state): State<ApiState<T, P>>,
 ) -> Result<StatusCode, ApiError> {
     let rows = sqlx::query(r#"DELETE FROM visitor WHERE id = ?"#)
         .bind(id)
@@ -62,6 +62,7 @@ mod test {
     use tower::ServiceExt;
 
     use crate::{
+        pow::Sha256ProofOfWorkService,
         testing,
         time::{ConstantTimeService, TimeService},
     };
@@ -71,8 +72,9 @@ mod test {
         unsafe { env::set_var("API_KEY", "key") };
 
         let time = ConstantTimeService::new();
+        let pow = Sha256ProofOfWorkService::new(0);
         let db = testing::database().await;
-        let api = crate::api(time.clone(), db.clone());
+        let api = crate::api(time.clone(), pow, db.clone());
 
         let response = api
             .oneshot(
@@ -94,8 +96,9 @@ mod test {
         unsafe { env::set_var("API_KEY", "key") };
 
         let time = ConstantTimeService::new();
+        let pow = Sha256ProofOfWorkService::new(0);
         let db = testing::database().await;
-        let api = crate::api(time.clone(), db.clone());
+        let api = crate::api(time.clone(), pow, db.clone());
 
         testing::insert_visitor(&db, "Groupless", None).await;
 
@@ -139,8 +142,9 @@ mod test {
         unsafe { env::set_var("API_KEY", "key") };
 
         let time = ConstantTimeService::new();
+        let pow = Sha256ProofOfWorkService::new(0);
         let db = testing::database().await;
-        let api = crate::api(time.clone(), db.clone());
+        let api = crate::api(time.clone(), pow, db.clone());
 
         let response = api
             .oneshot(
@@ -162,8 +166,9 @@ mod test {
         unsafe { env::set_var("API_KEY", "key") };
 
         let time = ConstantTimeService::new();
+        let pow = Sha256ProofOfWorkService::new(0);
         let db = testing::database().await;
-        let api = crate::api(time.clone(), db.clone());
+        let api = crate::api(time.clone(), pow, db.clone());
 
         testing::insert_visitor(&db, "Groupless", None).await;
 

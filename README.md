@@ -9,11 +9,12 @@ SQLite database.
 The following environment variables are used for configuration:
 
 | Variable    | Description                         | Default value  |
-|-------------|-------------------------------------|----------------|
+| ----------- | ----------------------------------- | -------------- |
 | API_KEY     | Key protecting the /admin endpoints |                |
-| CORS_ORIGIN | CORS preflight URL restriction      | *              |
+| CORS_ORIGIN | CORS preflight URL restriction      | \*             |
 | SQLITE_DB   | Path to SQLite database file        | data.db        |
 | LISTEN_ADDR | IP and port to listen on            | 127.0.0.1:3000 |
+| POW_COST    | Proof-of-work difficulty            | 4              |
 
 ### Sample Docker Compose
 
@@ -65,6 +66,12 @@ date: Sat, 10 Jun 2023 19:16:20 GMT
 
 ### Registering as a visitor
 
+Due to problems with bots making spam registrations the `/register` endpoint
+can be configured to require a
+[proof-of-work](https://en.wikipedia.org/wiki/Proof_of_work) to be provided by
+the client, configured by `POW_COST`. This can be disabled entirely by setting
+it to 0, in which case the `nonce` field is not required to register.
+
 Note that the fields `email` and `extra` are not shown in the public `GET /visitors` listing, but are intended only
 for the party organizers.
 
@@ -72,6 +79,27 @@ for the party organizers.
 curl -i -H 'Content-Type: application/json' \
      -X POST \
      -d '{"nick":"Lorem","group":"Ipsum","email":"lorem@example.com","extra":"Allergic to metaballs"}' \
+     http://localhost:3000/register
+```
+
+```
+HTTP/1.1 201 Created
+content-length: 0
+date: Sat, 10 Jun 2023 19:17:23 GMT
+```
+
+#### With proof-of-work
+
+The proof-of-work is as a solution verification, meaning that the client can
+calculate the required nonce before submitting the request. The `nonce` field
+should contain a values that when _appended_ to the `nick` field produces a
+[SHA-256](https://en.wikipedia.org/wiki/SHA-2) hash that _starts_ with at least
+the number of zeros as is configured as `POW_COST`.
+
+```sh
+curl -i -H 'Content-Type: application/json' \
+     -X POST \
+     -d '{"nick":"Lorem","group":"Ipsum","email":"lorem@example.com","extra":"Allergic to metaballs","nonce":"86717"}' \
      http://localhost:3000/register
 ```
 

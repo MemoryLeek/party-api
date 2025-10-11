@@ -1,12 +1,14 @@
 use std::borrow::Cow;
 
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::Serialize;
 use tower_governor::GovernorError;
+
+use crate::pow;
 
 #[derive(Serialize)]
 pub(crate) struct ApiError {
@@ -48,6 +50,21 @@ impl From<GovernorError> for ApiError {
             _ => Self {
                 code: StatusCode::INTERNAL_SERVER_ERROR,
                 error: error.to_string(),
+            },
+        }
+    }
+}
+
+impl From<pow::Error> for ApiError {
+    fn from(error: pow::Error) -> Self {
+        match error {
+            pow::Error::MissingNonce => Self {
+                code: StatusCode::BAD_REQUEST,
+                error: "missing nonce".to_owned(),
+            },
+            pow::Error::InvalidNonce => Self {
+                code: StatusCode::BAD_REQUEST,
+                error: "invalid nonce".to_owned(),
             },
         }
     }

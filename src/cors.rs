@@ -30,13 +30,14 @@ mod test {
     use hyper::{Request, StatusCode};
     use tower::ServiceExt;
 
-    use crate::{testing, time::ConstantTimeService};
+    use crate::{pow::Sha256ProofOfWorkService, testing, time::ConstantTimeService};
 
     #[tokio::test]
     async fn should_allow_any_by_default() {
         let time = ConstantTimeService::new();
+        let pow = Sha256ProofOfWorkService::new(0);
         let db = testing::database().await;
-        let api = crate::api(time.clone(), db.clone());
+        let api = crate::api(time.clone(), pow, db.clone());
 
         let response = api
             .oneshot(
@@ -78,8 +79,9 @@ mod test {
         unsafe { env::set_var("CORS_ORIGIN", "http://example.com") };
 
         let time = ConstantTimeService::new();
+        let pow = Sha256ProofOfWorkService::new(0);
         let db = testing::database().await;
-        let api = crate::api(time.clone(), db.clone());
+        let api = crate::api(time.clone(), pow, db.clone());
 
         let response = api
             .oneshot(
