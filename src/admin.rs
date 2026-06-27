@@ -3,12 +3,46 @@ use std::env;
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderValue, Request, Response, StatusCode},
     routing::{delete, get},
 };
+use constant_time_eq::constant_time_eq;
 use tower::ServiceBuilder;
+use tower_http::validate_request::{ValidateRequest, ValidateRequestHeaderLayer};
 
 use crate::{ApiState, db, error::ApiError, time::TimeService};
+
+#[derive(Clone)]
+struct BearerTokenHeader {
+    key: HeaderValue,
+}
+
+impl BearerTokenHeader {
+    fn new(key: &str) -> Self {
+        Self {
+            key: HeaderValue::from_str(&format!("Bearer {}", key)).unwrap(),
+        }
+    }
+
+    fn validation_layer(key: &str) -> ValidateRequestHeaderLayer<Self> {
+        ValidateRequestHeaderLayer::custom(Self::new(key))
+    }
+}
+
+impl<B> ValidateRequest<B> for BearerTokenHeader {
+    type ResponseBody = axum::body::Body;
+
+    fn validate(&mut self, request: &mut Request<B>) -> Result<(), Response<Self::ResponseBody>> {
+        match request.headers().get("Authorization") {
+            Some(actual) if constant_time_eq(self.key.as_bytes(), actual.as_bytes()) => Ok(()),
+            _ => {
+                let mut res = Response::new(axum::body::Body::empty());
+                *res.status_mut() = StatusCode::UNAUTHORIZED;
+                Err(res)
+            }
+        }
+    }
+}
 
 pub fn routes<T: TimeService>() -> Router<ApiState<T>> {
     match env::var("API_KEY") {
@@ -19,10 +53,7 @@ pub fn routes<T: TimeService>() -> Router<ApiState<T>> {
         Ok(key) => Router::new()
             .route("/visitors", get(list_visitors))
             .route("/visitors/{id}", delete(delete_visitor))
-            .layer(
-                ServiceBuilder::new()
-                    .layer(tower_http::validate_request::ValidateRequestHeaderLayer::bearer(&key)),
-            ),
+            .layer(ServiceBuilder::new().layer(BearerTokenHeader::validation_layer(&key))),
     }
 }
 

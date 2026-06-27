@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 axum = { version = "0.8", features = ["tokio"] }
 chrono = { version = "0.4", features = ["serde"] }
+constant_time_eq = "0.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.9", features = [
