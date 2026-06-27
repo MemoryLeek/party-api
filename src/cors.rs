@@ -30,13 +30,13 @@ mod test {
     use hyper::{Request, StatusCode};
     use tower::ServiceExt;
 
-    use crate::{testing, time::ConstantTimeService};
+    use crate::{captcha, testing, time::ConstantTimeService};
 
     #[tokio::test]
     async fn should_allow_any_by_default() {
         let time = ConstantTimeService::new();
         let db = testing::database().await;
-        let api = crate::api(time.clone(), db.clone());
+        let api = crate::api(time.clone(), captcha::NoOp::new(), db.clone());
 
         let response = api
             .oneshot(
@@ -79,7 +79,7 @@ mod test {
 
         let time = ConstantTimeService::new();
         let db = testing::database().await;
-        let api = crate::api(time.clone(), db.clone());
+        let api = crate::api(time.clone(), captcha::NoOp::new(), db.clone());
 
         let response = api
             .oneshot(

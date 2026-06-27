@@ -1,12 +1,14 @@
 use std::borrow::Cow;
 
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::Serialize;
 use tower_governor::GovernorError;
+
+use crate::captcha;
 
 #[derive(Serialize)]
 pub(crate) struct ApiError {
@@ -18,6 +20,21 @@ pub(crate) struct ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.code, Json(self)).into_response()
+    }
+}
+
+impl From<captcha::Error> for ApiError {
+    fn from(error: captcha::Error) -> Self {
+        match error {
+            captcha::Error::InvalidToken => Self {
+                code: StatusCode::BAD_REQUEST,
+                error: "captcha validation failed".to_owned(),
+            },
+            captcha::Error::ServiceError(_) => Self {
+                code: StatusCode::INTERNAL_SERVER_ERROR,
+                error: "captcha service unreachable".to_owned(),
+            },
+        }
     }
 }
 

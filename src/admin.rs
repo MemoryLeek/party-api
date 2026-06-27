@@ -10,7 +10,7 @@ use constant_time_eq::constant_time_eq;
 use tower::ServiceBuilder;
 use tower_http::validate_request::{ValidateRequest, ValidateRequestHeaderLayer};
 
-use crate::{ApiState, db, error::ApiError, time::TimeService};
+use crate::{ApiState, captcha::CaptchaService, db, error::ApiError, time::TimeService};
 
 #[derive(Clone)]
 struct BearerTokenHeader {
@@ -20,7 +20,7 @@ struct BearerTokenHeader {
 impl BearerTokenHeader {
     fn new(key: &str) -> Self {
         Self {
-            key: HeaderValue::from_str(&format!("Bearer {}", key)).unwrap(),
+            key: HeaderValue::from_str(&format!("Bearer {key}")).unwrap(),
         }
     }
 
@@ -44,7 +44,7 @@ impl<B> ValidateRequest<B> for BearerTokenHeader {
     }
 }
 
-pub fn routes<T: TimeService>() -> Router<ApiState<T>> {
+pub fn routes<T: TimeService, C: CaptchaService>() -> Router<ApiState<T, C>> {
     match env::var("API_KEY") {
         Err(_) => {
             eprintln!("API_KEY not set, /admin endpoints will be disabled");
@@ -57,21 +57,21 @@ pub fn routes<T: TimeService>() -> Router<ApiState<T>> {
     }
 }
 
-async fn list_visitors<T: TimeService>(
-    State(state): State<ApiState<T>>,
+async fn list_visitors<T: TimeService, C: CaptchaService>(
+    State(state): State<ApiState<T, C>>,
 ) -> Result<(StatusCode, Json<Vec<db::Visitor>>), ApiError> {
-    let visitors = sqlx::query_as::<_, db::Visitor>(r#"SELECT * FROM visitor ORDER BY id"#)
+    let visitors = sqlx::query_as::<_, db::Visitor>(r"SELECT * FROM visitor ORDER BY id")
         .fetch_all(&state.db)
         .await?;
 
     Ok((StatusCode::OK, Json(visitors)))
 }
 
-async fn delete_visitor<T: TimeService>(
+async fn delete_visitor<T: TimeService, C: CaptchaService>(
     Path(id): Path<i32>,
-    State(state): State<ApiState<T>>,
+    State(state): State<ApiState<T, C>>,
 ) -> Result<StatusCode, ApiError> {
-    let rows = sqlx::query(r#"DELETE FROM visitor WHERE id = ?"#)
+    let rows = sqlx::query(r"DELETE FROM visitor WHERE id = ?")
         .bind(id)
         .execute(&state.db)
         .await?
@@ -93,7 +93,7 @@ mod test {
     use tower::ServiceExt;
 
     use crate::{
-        testing,
+        captcha, testing,
         time::{ConstantTimeService, TimeService},
     };
 
@@ -103,7 +103,7 @@ mod test {
 
         let time = ConstantTimeService::new();
         let db = testing::database().await;
-        let api = crate::api(time.clone(), db.clone());
+        let api = crate::api(time.clone(), captcha::NoOp::new(), db.clone());
 
         let response = api
             .oneshot(
@@ -126,11 +126,11 @@ mod test {
 
         let time = ConstantTimeService::new();
         let db = testing::database().await;
-        let api = crate::api(time.clone(), db.clone());
+        let api = crate::api(time.clone(), captcha::NoOp::new(), db.clone());
 
         testing::insert_visitor(&db, "Groupless", None).await;
 
-        testing::insert_visitor(&db, "With Group", Some("Awesome".into())).await;
+        testing::insert_visitor(&db, "With Group", Some("Awesome")).await;
 
         let response = api
             .oneshot(
@@ -171,7 +171,7 @@ mod test {
 
         let time = ConstantTimeService::new();
         let db = testing::database().await;
-        let api = crate::api(time.clone(), db.clone());
+        let api = crate::api(time.clone(), captcha::NoOp::new(), db.clone());
 
         let response = api
             .oneshot(
@@ -194,7 +194,7 @@ mod test {
 
         let time = ConstantTimeService::new();
         let db = testing::database().await;
-        let api = crate::api(time.clone(), db.clone());
+        let api = crate::api(time.clone(), captcha::NoOp::new(), db.clone());
 
         testing::insert_visitor(&db, "Groupless", None).await;
 

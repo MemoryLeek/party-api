@@ -1,14 +1,14 @@
 use chrono::{DateTime, Utc};
 
 pub trait TimeService: Clone + Send + Sync + 'static {
-    fn now(self) -> DateTime<Utc>;
+    fn now(&self) -> DateTime<Utc>;
 }
 
 #[derive(Clone)]
 pub struct SystemTimeService {}
 
 impl TimeService for SystemTimeService {
-    fn now(self) -> DateTime<Utc> {
+    fn now(&self) -> DateTime<Utc> {
         Utc::now()
     }
 }
@@ -28,7 +28,7 @@ impl ConstantTimeService {
 
 #[cfg(test)]
 impl TimeService for ConstantTimeService {
-    fn now(self) -> DateTime<Utc> {
+    fn now(&self) -> DateTime<Utc> {
         self.value
     }
 }

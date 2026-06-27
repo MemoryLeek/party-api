@@ -1,3 +1,4 @@
+#![deny(clippy::pedantic)]
 use std::{env, net::SocketAddr, str::FromStr, sync::Arc};
 
 use axum::{
@@ -8,6 +9,7 @@ use axum::{
     routing::{get, post},
 };
 use error::ApiError;
+use hyper::Uri;
 use serde::{Deserialize, Serialize};
 use sqlx::{
     SqlitePool,
@@ -20,7 +22,10 @@ use tower_governor::{
     GovernorLayer, governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor,
 };
 
+use crate::captcha::{Cap, CaptchaService};
+
 mod admin;
+mod captcha;
 mod cors;
 mod db;
 mod error;
@@ -34,6 +39,8 @@ struct RegisterRequest {
     group: Option<String>,
     email: Option<String>,
     extra: Option<String>,
+    #[serde(rename = "cap-token")]
+    captcha_token: Option<String>,
 }
 
 #[derive(sqlx::FromRow, Serialize)]
@@ -44,12 +51,13 @@ struct Visitor {
 }
 
 #[derive(Clone)]
-pub struct ApiState<T: TimeService> {
+pub struct ApiState<T: TimeService, C: CaptchaService> {
     time: T,
+    captcha: C,
     db: SqlitePool,
 }
 
-fn api(time: impl TimeService, db: SqlitePool) -> Router {
+fn api(time: impl TimeService, captcha: impl CaptchaService, db: SqlitePool) -> Router {
     let add_visitor_rate_config = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(60)
@@ -67,15 +75,20 @@ fn api(time: impl TimeService, db: SqlitePool) -> Router {
         .route("/visitors", get(list_visitors))
         .nest("/admin", admin::routes())
         .layer(cors::layer())
-        .with_state(ApiState { time, db })
+        .with_state(ApiState { time, captcha, db })
 }
 
-async fn add_visitor<T: TimeService>(
+async fn add_visitor<T: TimeService, C: CaptchaService>(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    State(state): State<ApiState<T>>,
+    State(state): State<ApiState<T, C>>,
     Json(request): Json<RegisterRequest>,
 ) -> Result<StatusCode, ApiError> {
+    state
+        .captcha
+        .verify(request.captcha_token.as_deref().unwrap_or(""))
+        .await?;
+
     sqlx::query(
         r#"INSERT INTO visitor (created_at, ip, nick, "group", email, extra) VALUES ($1, $2, $3, $4, $5, $6)"#,
     )
@@ -83,8 +96,7 @@ async fn add_visitor<T: TimeService>(
     .bind(
         headers
             .get("X-Forwarded-For")
-            .map(|x| x.to_str().ok())
-            .unwrap_or(Some(addr.to_string().as_str())),
+            .map_or(Some(addr.to_string().as_str()), |x| x.to_str().ok()),
     )
     .bind(request.nick)
     .bind(request.group)
@@ -96,8 +108,8 @@ async fn add_visitor<T: TimeService>(
     Ok(StatusCode::CREATED)
 }
 
-async fn list_visitors<T: TimeService>(
-    State(state): State<ApiState<T>>,
+async fn list_visitors<T: TimeService, C: CaptchaService>(
+    State(state): State<ApiState<T, C>>,
 ) -> Result<(StatusCode, Json<Vec<Visitor>>), ApiError> {
     let visitors = sqlx::query_as::<_, Visitor>(r#"SELECT id, nick, "group" FROM visitor"#)
         .fetch_all(&state.db)
@@ -113,7 +125,7 @@ async fn main() {
         env::var("SQLITE_DB").unwrap_or("data.db".into())
     );
     let db_options = SqliteConnectOptions::from_str(&db_connection_string)
-        .expect(&format!("bad connection string: {}", db_connection_string))
+        .unwrap_or_else(|_| panic!("bad connection string: {db_connection_string}"))
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal);
@@ -125,15 +137,26 @@ async fn main() {
 
     db::init(&db).await.expect("failed to initialize database");
 
+    let service = if let Ok(cap_uri) = env::var("CAP_INSTANCE_URI")
+        && let Ok(cap_secret) = env::var("CAP_SECRET")
+    {
+        let cap_uri =
+            Uri::try_from(&cap_uri).unwrap_or_else(|_| panic!("bad CAP_INSTANCE_URI: {cap_uri}"));
+        api(SystemTimeService {}, Cap::new(cap_uri, cap_secret), db)
+    } else {
+        api(SystemTimeService {}, captcha::NoOp::new(), db)
+    };
+
     let addr = env::var("LISTEN_ADDR").unwrap_or("127.0.0.1:3000".into());
-    let socket_address = SocketAddr::from_str(&addr).expect(&format!("bad LISTEN_ADDR: {}", addr));
+    let socket_address =
+        SocketAddr::from_str(&addr).unwrap_or_else(|_| panic!("bad LISTEN_ADDR: {addr}"));
     let listener = TcpListener::bind(socket_address)
         .await
         .expect("failed to bind listener");
 
     axum::serve(
         listener,
-        api(SystemTimeService {}, db).into_make_service_with_connect_info::<SocketAddr>(),
+        service.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
     .await
@@ -159,8 +182,8 @@ async fn shutdown_signal() {
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+        () = ctrl_c => {},
+        () = terminate => {},
     }
 }
 
@@ -180,13 +203,13 @@ mod test {
     async fn can_register_using_only_nick() {
         let time = ConstantTimeService::new();
         let db = testing::database().await;
-        let api = api(time.clone(), db.clone());
+        let api = api(time.clone(), captcha::NoOp::new(), db.clone());
 
         let response = api
             .oneshot(
                 Request::builder()
                     .extension(ConnectInfo(SocketAddr::new(
-                        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                        IpAddr::V4(Ipv4Addr::LOCALHOST),
                         8080,
                     )))
                     .method("POST")
@@ -201,7 +224,7 @@ mod test {
         assert_eq!(response.status(), StatusCode::CREATED);
 
         // Check created DB entry
-        let visitor = sqlx::query_as::<_, db::Visitor>(r#"SELECT * FROM visitor"#)
+        let visitor = sqlx::query_as::<_, db::Visitor>(r"SELECT * FROM visitor")
             .fetch_one(&db)
             .await
             .unwrap();
@@ -219,7 +242,7 @@ mod test {
     async fn can_only_register_single_nick() {
         let time = ConstantTimeService::new();
         let db = testing::database().await;
-        let api = api(time.clone(), db.clone());
+        let api = api(time.clone(), captcha::NoOp::new(), db.clone());
 
         testing::insert_visitor(&db, "Only One Nick", None).await;
 
@@ -227,7 +250,7 @@ mod test {
             .oneshot(
                 Request::builder()
                     .extension(ConnectInfo(SocketAddr::new(
-                        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                        IpAddr::V4(Ipv4Addr::LOCALHOST),
                         8080,
                     )))
                     .method("POST")
@@ -261,13 +284,13 @@ mod test {
     async fn can_register_with_all_fields() {
         let time = ConstantTimeService::new();
         let db = testing::database().await;
-        let api = api(time.clone(), db.clone());
+        let api = api(time.clone(), captcha::NoOp::new(), db.clone());
 
         let response = api
             .oneshot(
                 Request::builder()
                     .extension(ConnectInfo(SocketAddr::new(
-                        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                        IpAddr::V4(Ipv4Addr::LOCALHOST),
                         8080,
                     )))
                     .method("POST")
@@ -282,7 +305,7 @@ mod test {
         assert_eq!(response.status(), StatusCode::CREATED);
 
         // Check created DB entry
-        let visitor = sqlx::query_as::<_, db::Visitor>(r#"SELECT * FROM visitor"#)
+        let visitor = sqlx::query_as::<_, db::Visitor>(r"SELECT * FROM visitor")
             .fetch_one(&db)
             .await
             .unwrap();
@@ -298,10 +321,6 @@ mod test {
 
     #[tokio::test]
     async fn should_rate_limit_register() {
-        let time = ConstantTimeService::new();
-        let db = testing::database().await;
-        let mut api = api(time.clone(), db.clone());
-
         async fn register(api: &mut Router, nick: &str) -> impl IntoResponse {
             ServiceExt::<Request<Body>>::ready(&mut api.clone().into_service())
                 .await
@@ -309,18 +328,22 @@ mod test {
                 .call(
                     Request::builder()
                         .extension(ConnectInfo(SocketAddr::new(
-                            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                            IpAddr::V4(Ipv4Addr::LOCALHOST),
                             8080,
                         )))
                         .method("POST")
                         .uri("/register")
                         .header("Content-Type", "application/json")
-                        .body(Body::from(format!(r#"{{"nick":"{}"}}"#, nick)))
+                        .body(Body::from(format!(r#"{{"nick":"{nick}"}}"#)))
                         .unwrap(),
                 )
                 .await
                 .unwrap()
         }
+
+        let time = ConstantTimeService::new();
+        let db = testing::database().await;
+        let mut api = api(time.clone(), captcha::NoOp::new(), db.clone());
 
         let response = register(&mut api, "One").await.into_response();
         assert_eq!(response.status(), StatusCode::CREATED);
@@ -336,11 +359,11 @@ mod test {
     async fn can_list_visitors() {
         let time = ConstantTimeService::new();
         let db = testing::database().await;
-        let api = api(time.clone(), db.clone());
+        let api = api(time.clone(), captcha::NoOp::new(), db.clone());
 
         testing::insert_visitor(&db, "Groupless", None).await;
 
-        testing::insert_visitor(&db, "With Group", Some("Awesome".into())).await;
+        testing::insert_visitor(&db, "With Group", Some("Awesome")).await;
 
         let response = api
             .oneshot(

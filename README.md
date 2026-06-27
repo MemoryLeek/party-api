@@ -8,12 +8,14 @@ SQLite database.
 
 The following environment variables are used for configuration:
 
-| Variable    | Description                         | Default value  |
-|-------------|-------------------------------------|----------------|
-| API_KEY     | Key protecting the /admin endpoints |                |
-| CORS_ORIGIN | CORS preflight URL restriction      | *              |
-| SQLITE_DB   | Path to SQLite database file        | data.db        |
-| LISTEN_ADDR | IP and port to listen on            | 127.0.0.1:3000 |
+| Variable         | Description                         | Default value  |
+|------------------|-------------------------------------|----------------|
+| API_KEY          | Key protecting the /admin endpoints |                |
+| CORS_ORIGIN      | CORS preflight URL restriction      | *              |
+| SQLITE_DB        | Path to SQLite database file        | data.db        |
+| LISTEN_ADDR      | IP and port to listen on            | 127.0.0.1:3000 |
+| CAP_INSTANCE_URI | Cap site endpoint                   |                |
+| CAP_SECRET       | Cap site secret                     |                |
 
 ### Sample Docker Compose
 
@@ -65,6 +67,11 @@ date: Sat, 10 Jun 2023 19:16:20 GMT
 
 ### Registering as a visitor
 
+Due to problems with bots making spam registrations the `/register` endpoint can be configured to require a
+[proof-of-work](https://en.wikipedia.org/wiki/Proof_of_work) to be provided by the client using the self-hostable
+CAPTCHA tool [Cap](https://trycap.dev/). This is only enabled/required if **both** `CAP_INSTANCE_URI` and `CAP_SECRET`
+are set.
+
 Note that the fields `email` and `extra` are not shown in the public `GET /visitors` listing, but are intended only
 for the party organizers.
 
@@ -72,6 +79,27 @@ for the party organizers.
 curl -i -H 'Content-Type: application/json' \
      -X POST \
      -d '{"nick":"Lorem","group":"Ipsum","email":"lorem@example.com","extra":"Allergic to metaballs"}' \
+     http://localhost:3000/register
+```
+
+```
+HTTP/1.1 201 Created
+content-length: 0
+date: Sat, 10 Jun 2023 19:17:23 GMT
+```
+
+#### With proof-of-work
+
+See the [Cap Quickstart](https://trycap.dev/guide/) for detailed information about how to add the Cap widget to your
+frontend.
+
+The `CAP_INSTANCE_URI` should point to the actual verification endpoint, like
+`https://<your-instance>/<site-key>/siteverify`. `CAP_SECRET` is your generated secret key, like `sk-xxx`.
+
+```sh
+curl -i -H 'Content-Type: application/json' \
+     -X POST \
+     -d '{"nick":"Lorem","group":"Ipsum","email":"lorem@example.com","extra":"Allergic to metaballs","cap-token":"fb69400c43:1ab132ceaeb7be79:d33ea92570f08527ba917c8ba24cc3"}' \
      http://localhost:3000/register
 ```
 
