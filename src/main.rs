@@ -8,7 +8,6 @@ use axum::{
     routing::{get, post},
 };
 use error::ApiError;
-use pow::{ProofOfWorkService, Sha256ProofOfWorkService};
 use serde::{Deserialize, Serialize};
 use sqlx::{
     SqlitePool,
@@ -25,29 +24,16 @@ mod admin;
 mod cors;
 mod db;
 mod error;
-mod pow;
 #[cfg(test)]
 mod testing;
 mod time;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 struct RegisterRequest {
     nick: String,
     group: Option<String>,
     email: Option<String>,
     extra: Option<String>,
-    #[serde(skip_serializing)]
-    nonce: Option<String>,
-}
-
-impl pow::Validatable for RegisterRequest {
-    fn payload(&self) -> &str {
-        &self.nick
-    }
-
-    fn nonce(&self) -> Option<&str> {
-        self.nonce.as_deref()
-    }
 }
 
 #[derive(sqlx::FromRow, Serialize)]
@@ -58,13 +44,12 @@ struct Visitor {
 }
 
 #[derive(Clone)]
-pub struct ApiState<T: TimeService, P: ProofOfWorkService> {
+pub struct ApiState<T: TimeService> {
     time: T,
-    pow: P,
     db: SqlitePool,
 }
 
-fn api(time: impl TimeService, pow: impl ProofOfWorkService, db: SqlitePool) -> Router {
+fn api(time: impl TimeService, db: SqlitePool) -> Router {
     let add_visitor_rate_config = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(60)
@@ -82,18 +67,15 @@ fn api(time: impl TimeService, pow: impl ProofOfWorkService, db: SqlitePool) -> 
         .route("/visitors", get(list_visitors))
         .nest("/admin", admin::routes())
         .layer(cors::layer())
-        .with_state(ApiState { time, pow, db })
+        .with_state(ApiState { time, db })
 }
 
-async fn add_visitor<T: TimeService, P: ProofOfWorkService>(
+async fn add_visitor<T: TimeService>(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    State(state): State<ApiState<T, P>>,
+    State(state): State<ApiState<T>>,
     Json(request): Json<RegisterRequest>,
 ) -> Result<StatusCode, ApiError> {
-    // Validate proof of work
-    state.pow.is_valid(&request)?;
-
     sqlx::query(
         r#"INSERT INTO visitor (created_at, ip, nick, "group", email, extra) VALUES ($1, $2, $3, $4, $5, $6)"#,
     )
@@ -114,8 +96,8 @@ async fn add_visitor<T: TimeService, P: ProofOfWorkService>(
     Ok(StatusCode::CREATED)
 }
 
-async fn list_visitors<T: TimeService, P: ProofOfWorkService>(
-    State(state): State<ApiState<T, P>>,
+async fn list_visitors<T: TimeService>(
+    State(state): State<ApiState<T>>,
 ) -> Result<(StatusCode, Json<Vec<Visitor>>), ApiError> {
     let visitors = sqlx::query_as::<_, Visitor>(r#"SELECT id, nick, "group" FROM visitor"#)
         .fetch_all(&state.db)
@@ -131,7 +113,7 @@ async fn main() {
         env::var("SQLITE_DB").unwrap_or("data.db".into())
     );
     let db_options = SqliteConnectOptions::from_str(&db_connection_string)
-        .unwrap_or_else(|_| panic!("bad connection string: {}", db_connection_string))
+        .expect(&format!("bad connection string: {}", db_connection_string))
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal);
@@ -143,27 +125,15 @@ async fn main() {
 
     db::init(&db).await.expect("failed to initialize database");
 
-    let pow_cost = env::var("POW_COST")
-        .as_deref()
-        .unwrap_or("4")
-        .parse::<usize>()
-        .expect("failed to parse POW_COST into usize");
-
     let addr = env::var("LISTEN_ADDR").unwrap_or("127.0.0.1:3000".into());
-    let socket_address =
-        SocketAddr::from_str(&addr).unwrap_or_else(|_| panic!("bad LISTEN_ADDR: {}", addr));
+    let socket_address = SocketAddr::from_str(&addr).expect(&format!("bad LISTEN_ADDR: {}", addr));
     let listener = TcpListener::bind(socket_address)
         .await
         .expect("failed to bind listener");
 
     axum::serve(
         listener,
-        api(
-            SystemTimeService {},
-            Sha256ProofOfWorkService::new(pow_cost),
-            db,
-        )
-        .into_make_service_with_connect_info::<SocketAddr>(),
+        api(SystemTimeService {}, db).into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
     .await
@@ -209,9 +179,8 @@ mod test {
     #[tokio::test]
     async fn can_register_using_only_nick() {
         let time = ConstantTimeService::new();
-        let pow = Sha256ProofOfWorkService::new(0);
         let db = testing::database().await;
-        let api = api(time.clone(), pow, db.clone());
+        let api = api(time.clone(), db.clone());
 
         let response = api
             .oneshot(
@@ -249,9 +218,8 @@ mod test {
     #[tokio::test]
     async fn can_only_register_single_nick() {
         let time = ConstantTimeService::new();
-        let pow = Sha256ProofOfWorkService::new(0);
         let db = testing::database().await;
-        let api = api(time.clone(), pow, db.clone());
+        let api = api(time.clone(), db.clone());
 
         testing::insert_visitor(&db, "Only One Nick", None).await;
 
@@ -292,9 +260,8 @@ mod test {
     #[tokio::test]
     async fn can_register_with_all_fields() {
         let time = ConstantTimeService::new();
-        let pow = Sha256ProofOfWorkService::new(0);
         let db = testing::database().await;
-        let api = api(time.clone(), pow, db.clone());
+        let api = api(time.clone(), db.clone());
 
         let response = api
             .oneshot(
@@ -332,9 +299,8 @@ mod test {
     #[tokio::test]
     async fn should_rate_limit_register() {
         let time = ConstantTimeService::new();
-        let pow = Sha256ProofOfWorkService::new(0);
         let db = testing::database().await;
-        let mut api = api(time.clone(), pow, db.clone());
+        let mut api = api(time.clone(), db.clone());
 
         async fn register(api: &mut Router, nick: &str) -> impl IntoResponse {
             ServiceExt::<Request<Body>>::ready(&mut api.clone().into_service())
@@ -367,90 +333,14 @@ mod test {
     }
 
     #[tokio::test]
-    async fn register_should_require_proof_of_work_if_configured() {
-        let time = ConstantTimeService::new();
-        let pow = Sha256ProofOfWorkService::new(4);
-        let db = testing::database().await;
-        let api = api(time.clone(), pow, db.clone());
-
-        let response = api
-            .oneshot(
-                Request::builder()
-                    .extension(ConnectInfo(SocketAddr::new(
-                        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                        8080,
-                    )))
-                    .method("POST")
-                    .uri("/register")
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(r#"{"nick":"Test"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-        let body = String::from_utf8(
-            response
-                .into_body()
-                .collect()
-                .await
-                .unwrap()
-                .to_bytes()
-                .to_vec(),
-        )
-        .unwrap();
-        assert_eq!(body, r#"{"error":"missing nonce"}"#);
-    }
-
-    #[tokio::test]
-    async fn register_should_accept_valid_proof_of_work() {
-        let time = ConstantTimeService::new();
-        let pow = Sha256ProofOfWorkService::new(4);
-        let db = testing::database().await;
-        let api = api(time.clone(), pow, db.clone());
-
-        let response = api
-            .oneshot(
-                Request::builder()
-                    .extension(ConnectInfo(SocketAddr::new(
-                        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                        8080,
-                    )))
-                    .method("POST")
-                    .uri("/register")
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(r#"{"nick":"Test","nonce":"49059"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::CREATED);
-
-        // Check created DB entry
-        let visitor = sqlx::query_as::<_, db::Visitor>(r#"SELECT * FROM visitor"#)
-            .fetch_one(&db)
-            .await
-            .unwrap();
-
-        assert_eq!(visitor.id, 1);
-        assert_eq!(visitor.created_at, time.now());
-        assert_eq!(visitor.ip, "127.0.0.1:8080");
-        assert_eq!(visitor.nick, "Test");
-    }
-
-    #[tokio::test]
     async fn can_list_visitors() {
         let time = ConstantTimeService::new();
-        let pow = Sha256ProofOfWorkService::new(0);
         let db = testing::database().await;
-        let api = api(time.clone(), pow, db.clone());
+        let api = api(time.clone(), db.clone());
 
         testing::insert_visitor(&db, "Groupless", None).await;
 
-        testing::insert_visitor(&db, "With Group", Some("Awesome")).await;
+        testing::insert_visitor(&db, "With Group", Some("Awesome".into())).await;
 
         let response = api
             .oneshot(
